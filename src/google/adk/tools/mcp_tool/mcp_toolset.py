@@ -51,6 +51,11 @@ except ImportError as e:
 
 from .mcp_tool import MCPTool
 
+# Import TYPE_CHECKING to avoid circular imports
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+  from .sampling_config import SamplingConfig
+
 logger = logging.getLogger("google_adk." + __name__)
 
 
@@ -97,6 +102,7 @@ class MCPToolset(BaseToolset):
       errlog: TextIO = sys.stderr,
       auth_scheme: Optional[AuthScheme] = None,
       auth_credential: Optional[AuthCredential] = None,
+      sampling_config: Optional['SamplingConfig'] = None,
   ):
     """Initializes the MCPToolset.
 
@@ -115,6 +121,8 @@ class MCPToolset(BaseToolset):
       errlog: TextIO stream for error logging.
       auth_scheme: The auth scheme of the tool for tool calling
       auth_credential: The auth credential of the tool for tool calling
+      sampling_config: Optional configuration for MCP sampling functionality.
+        If provided, enables the MCP server to request LLM sampling from this client.
     """
     super().__init__(tool_filter=tool_filter)
 
@@ -123,11 +131,13 @@ class MCPToolset(BaseToolset):
 
     self._connection_params = connection_params
     self._errlog = errlog
+    self._sampling_config = sampling_config
 
     # Create the session manager that will handle the MCP connection
     self._mcp_session_manager = MCPSessionManager(
         connection_params=self._connection_params,
         errlog=self._errlog,
+        sampling_config=self._sampling_config,
     )
     self._auth_scheme = auth_scheme
     self._auth_credential = auth_credential

@@ -22,12 +22,14 @@ try:
   from .mcp_session_manager import StreamableHTTPConnectionParams
   from .mcp_tool import MCPTool
   from .mcp_toolset import MCPToolset
+  from .sampling_config import SamplingConfig
 
   __all__.extend([
       'adk_to_mcp_tool_type',
       'gemini_to_json_schema',
       'MCPTool',
       'MCPToolset',
+      'SamplingConfig',
       'StdioConnectionParams',
       'SseConnectionParams',
       'StreamableHTTPConnectionParams',

@@ -27,6 +27,7 @@ from typing import Dict
 from typing import Optional
 from typing import TextIO
 from typing import Union
+from typing import TYPE_CHECKING
 
 import anyio
 from pydantic import BaseModel
@@ -37,6 +38,7 @@ try:
   from mcp.client.sse import sse_client
   from mcp.client.stdio import stdio_client
   from mcp.client.streamable_http import streamablehttp_client
+  from mcp.types import SamplingCapability
 except ImportError as e:
 
   if sys.version_info < (3, 10):
@@ -46,6 +48,9 @@ except ImportError as e:
     ) from e
   else:
     raise e
+
+if TYPE_CHECKING:
+  from .sampling_config import SamplingConfig
 
 logger = logging.getLogger('google_adk.' + __name__)
 
@@ -152,6 +157,7 @@ class MCPSessionManager:
           StreamableHTTPConnectionParams,
       ],
       errlog: TextIO = sys.stderr,
+      sampling_config: Optional['SamplingConfig'] = None,
   ):
     """Initializes the MCP session manager.
 
@@ -161,6 +167,8 @@ class MCPSessionManager:
           parameters but it's not configurable for now.
         errlog: (Optional) TextIO stream for error logging. Use only for
           initializing a local stdio MCP session.
+        sampling_config: Optional configuration for MCP sampling functionality.
+          If provided, enables sampling capability in MCP sessions.
     """
     if isinstance(connection_params, StdioServerParameters):
       # So far timeout is not configurable. Given MCP is still evolving, we
@@ -177,6 +185,14 @@ class MCPSessionManager:
     else:
       self._connection_params = connection_params
     self._errlog = errlog
+    self._sampling_config = sampling_config
+
+    # Initialize sampling handler if config is provided
+    self._sampling_handler = None
+    if self._sampling_config and self._sampling_config.enable_sampling:
+      # Import here to avoid circular imports
+      from .mcp_sampling_handler import MCPSamplingHandler
+      self._sampling_handler = MCPSamplingHandler(self._sampling_config)
 
     # Session pool: maps session keys to (session, exit_stack) tuples
     self._sessions: Dict[str, tuple[ClientSession, AsyncExitStack]] = {}
@@ -359,7 +375,29 @@ class MCPSessionManager:
           session = await exit_stack.enter_async_context(
               ClientSession(*transports[:2])
           )
-        await session.initialize()
+        
+        # Prepare capabilities based on configuration
+        capabilities = {}
+        if self._sampling_handler:
+          capabilities['sampling'] = SamplingCapability()
+          logger.debug('Enabling sampling capability for MCP session')
+        
+        await session.initialize(capabilities=capabilities)
+
+        # Register sampling request handler if enabled
+        if self._sampling_handler:
+          # Set up the sampling request handler
+          async def handle_sampling_request(request):
+            return await self._sampling_handler.handle_sampling_request(request)
+          
+          # Note: The actual registration depends on the MCP library's interface
+          # This is a placeholder for the proper registration mechanism
+          if hasattr(session, 'set_request_handler'):
+            session.set_request_handler('sampling/createMessage', handle_sampling_request)
+          elif hasattr(session, 'request_handlers'):
+            session.request_handlers['sampling/createMessage'] = handle_sampling_request
+          else:
+            logger.warning('Could not register sampling handler - MCP session does not support request handlers')
 
         # Store session and exit stack in the pool
         self._sessions[session_key] = (session, exit_stack)
