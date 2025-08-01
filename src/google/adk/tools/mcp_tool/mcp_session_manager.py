@@ -38,7 +38,6 @@ try:
   from mcp.client.sse import sse_client
   from mcp.client.stdio import stdio_client
   from mcp.client.streamable_http import streamablehttp_client
-  from mcp.types import SamplingCapability
 except ImportError as e:
 
   if sys.version_info < (3, 10):
@@ -362,6 +361,15 @@ class MCPSessionManager:
         transports = await exit_stack.enter_async_context(client)
         # The streamable http client returns a GetSessionCallback in addition to the read/write MemoryObjectStreams
         # needed to build the ClientSession, we limit then to the two first values to be compatible with all clients.
+        
+        # Prepare sampling callback if sampling is enabled
+        sampling_callback = None
+        if self._sampling_handler:
+          async def handle_sampling_request(request):
+            return await self._sampling_handler.handle_sampling_request(request)
+          sampling_callback = handle_sampling_request
+          logger.debug('Enabling sampling callback for MCP session')
+        
         if isinstance(self._connection_params, StdioConnectionParams):
           session = await exit_stack.enter_async_context(
               ClientSession(
@@ -369,35 +377,15 @@ class MCPSessionManager:
                   read_timeout_seconds=timedelta(
                       seconds=self._connection_params.timeout
                   ),
+                  sampling_callback=sampling_callback,
               )
           )
         else:
           session = await exit_stack.enter_async_context(
-              ClientSession(*transports[:2])
+              ClientSession(*transports[:2], sampling_callback=sampling_callback)
           )
         
-        # Prepare capabilities based on configuration
-        capabilities = {}
-        if self._sampling_handler:
-          capabilities['sampling'] = SamplingCapability()
-          logger.debug('Enabling sampling capability for MCP session')
-        
-        await session.initialize(capabilities=capabilities)
-
-        # Register sampling request handler if enabled
-        if self._sampling_handler:
-          # Set up the sampling request handler
-          async def handle_sampling_request(request):
-            return await self._sampling_handler.handle_sampling_request(request)
-          
-          # Note: The actual registration depends on the MCP library's interface
-          # This is a placeholder for the proper registration mechanism
-          if hasattr(session, 'set_request_handler'):
-            session.set_request_handler('sampling/createMessage', handle_sampling_request)
-          elif hasattr(session, 'request_handlers'):
-            session.request_handlers['sampling/createMessage'] = handle_sampling_request
-          else:
-            logger.warning('Could not register sampling handler - MCP session does not support request handlers')
+        await session.initialize()
 
         # Store session and exit stack in the pool
         self._sessions[session_key] = (session, exit_stack)
